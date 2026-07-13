@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1032,8 +1033,12 @@
     <input type="text" id="fPhone" placeholder="(54) 3355-1000">
     <p style="margin:4px 0 0; font-size:11.5px; color:var(--ink-soft);">Preencha WhatsApp OU telefone — o app prioriza o WhatsApp e só usa o telefone quando não houver mensageiro.</p>
 
-    <label>Foto</label>
-    <div class="file-btn" id="fPhoto">📷 Toque para escolher uma foto (opcional no teste)</div>
+    <label>Foto (opcional)</label>
+    <div class="icon-upload-row">
+      <div class="icon-preview-box" id="fPhotoPreview" style="background:var(--border);"></div>
+      <div class="file-btn" id="fPhotoBtn" style="flex:1; margin:0;">📁 Escolher uma foto</div>
+      <input type="file" id="fPhotoInput" accept="image/*" style="display:none;">
+    </div>
 
     <label for="fEmail">E-mail</label>
     <input type="email" id="fEmail" placeholder="seuemail@exemplo.com">
@@ -1103,7 +1108,8 @@ let providers = []; // populado do Supabase (por cidade no público, tudo pro mo
 function dbProviderToLocal(row){
   return {
     id: row.id, name: row.name, city: row.city, cat: row.cat, desc: row.description,
-    whats: row.whats, phone: row.phone, email: row.email, consent: row.consent, status: row.status
+    whats: row.whats, phone: row.phone, email: row.email, consent: row.consent, status: row.status,
+    photo: row.photo_url || null
   };
 }
 
@@ -1211,6 +1217,13 @@ function iconSvgForType(type){
 function avatarIcon(cat){
   const type = CATEGORY_TYPE[cat] || "Serviço";
   return iconSvgForType(type);
+}
+
+function avatarContent(p){
+  if(p.photo){
+    return `<img src="${p.photo}" style="width:100%; height:100%; object-fit:cover; border-radius:inherit;" alt="${p.name}">`;
+  }
+  return avatarIcon(p.cat);
 }
 
 let currentCity = null;
@@ -1334,7 +1347,7 @@ function renderGrid(){
     const card = document.createElement('div');
     card.className = 'card' + (isPending ? ' pending' : '');
     card.innerHTML = `
-      <div class="avatar">${avatarIcon(p.cat)}</div>
+      <div class="avatar">${avatarContent(p)}</div>
       <div class="card-info">
         <div class="card-name">${p.name}${isPending ? '<span class="badge-pending">Pendente</span>' : ''}</div>
         <span class="card-cat">${p.cat}</span>
@@ -1347,7 +1360,7 @@ function renderGrid(){
 let currentDetailProvider = null;
 function openDetail(p){
   currentDetailProvider = p;
-  document.getElementById('detailAvatar').innerHTML = avatarIcon(p.cat);
+  document.getElementById('detailAvatar').innerHTML = avatarContent(p);
   document.getElementById('detailName').textContent = p.name;
   document.getElementById('detailCat').textContent = p.cat;
   document.getElementById('detailDesc').textContent = p.desc;
@@ -1629,6 +1642,9 @@ function openNewForm(){
   document.getElementById('fEmail').value = '';
   document.getElementById('fConsent').checked = false;
   document.getElementById('fTermsAccept').checked = false;
+  pendingPhotoFile = null;
+  existingPhotoUrl = null;
+  document.getElementById('fPhotoPreview').innerHTML = '';
   document.getElementById('formOverlay').classList.add('open');
 }
 
@@ -1668,13 +1684,40 @@ function openEditForm(idx){
   document.getElementById('fEmail').value = p.email || '';
   document.getElementById('fConsent').checked = !!p.consent;
   document.getElementById('fTermsAccept').checked = true;
+  pendingPhotoFile = null;
+  existingPhotoUrl = p.photo || null;
+  document.getElementById('fPhotoPreview').innerHTML = existingPhotoUrl ? `<img src="${existingPhotoUrl}" style="width:100%; height:100%; object-fit:cover; border-radius:inherit;" alt="Foto atual">` : '';
   document.getElementById('adminPanelOverlay').classList.remove('open');
   document.getElementById('formOverlay').classList.add('open');
 }
 
 document.getElementById('fabAdd').onclick = openNewForm;
 document.getElementById('closeForm').onclick = () => document.getElementById('formOverlay').classList.remove('open');
-document.getElementById('fPhoto').onclick = () => showToast('📷 No app real, aqui abre a galeria/câmera do celular.');
+let pendingPhotoFile = null;
+let existingPhotoUrl = null;
+
+document.getElementById('fPhotoBtn').onclick = () => document.getElementById('fPhotoInput').click();
+document.getElementById('fPhotoInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ showToast('Escolha um arquivo de imagem.'); return; }
+  if(file.size > 5 * 1024 * 1024){ showToast('Imagem muito grande (máximo 5MB).'); return; }
+  pendingPhotoFile = file;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    document.getElementById('fPhotoPreview').innerHTML = `<img src="${ev.target.result}" style="width:100%; height:100%; object-fit:cover; border-radius:inherit;" alt="Prévia">`;
+  };
+  reader.readAsDataURL(file);
+});
+
+async function uploadProviderPhoto(file){
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+  const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error } = await sb.storage.from('provider-photos').upload(path, file);
+  if(error) throw error;
+  const { data } = sb.storage.from('provider-photos').getPublicUrl(path);
+  return data.publicUrl;
+}
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -1766,7 +1809,7 @@ document.getElementById('submitForm').onclick = async () => {
     return;
   }
 
-  const dataToSave = { name, city, cat, desc, whatsDigits, phoneDigits, email, consent };
+  const dataToSave = { name, city, cat, desc, whatsDigits, phoneDigits, email, consent, photoFile: pendingPhotoFile };
 
   if(editingIndex !== null){
     // Edição pelo painel de moderação: salva direto, sem tela de conferência
@@ -1775,14 +1818,25 @@ document.getElementById('submitForm').onclick = async () => {
     submitBtn.textContent = 'Salvando...';
     submitBtn.disabled = true;
     const p = providers[editingIndex];
+    let photoUrl = existingPhotoUrl;
+    if(pendingPhotoFile){
+      try { photoUrl = await uploadProviderPhoto(pendingPhotoFile); }
+      catch(err){
+        submitBtn.textContent = originalLabel;
+        submitBtn.disabled = false;
+        showToast('Não foi possível enviar a foto. Tente novamente.');
+        console.error(err);
+        return;
+      }
+    }
     const { error } = await sb.from('providers').update({
       name, city, cat, description: desc, whats: whatsDigits, phone: phoneDigits, email, consent,
-      updated_at: new Date().toISOString()
+      photo_url: photoUrl, updated_at: new Date().toISOString()
     }).eq('id', p.id);
     submitBtn.textContent = originalLabel;
     submitBtn.disabled = false;
     if(error){ showToast('Não foi possível salvar. Tente novamente.'); console.error(error); return; }
-    p.name = name; p.city = city; p.cat = cat; p.desc = desc; p.whats = whatsDigits; p.phone = phoneDigits; p.email = email; p.consent = consent;
+    p.name = name; p.city = city; p.cat = cat; p.desc = desc; p.whats = whatsDigits; p.phone = phoneDigits; p.email = email; p.consent = consent; p.photo = photoUrl;
     document.getElementById('formOverlay').classList.remove('open');
     showToast('✅ Cadastro atualizado.');
     renderGrid();
@@ -1819,15 +1873,27 @@ document.getElementById('reviewBackBtn').onclick = () => document.getElementById
 
 document.getElementById('reviewConfirmBtn').onclick = async () => {
   if(!pendingSubmitData) return;
-  const { name, city, cat, desc, whatsDigits, phoneDigits, email, consent } = pendingSubmitData;
+  const { name, city, cat, desc, whatsDigits, phoneDigits, email, consent, photoFile } = pendingSubmitData;
 
   const confirmBtn = document.getElementById('reviewConfirmBtn');
   const originalLabel = confirmBtn.textContent;
   confirmBtn.textContent = 'Enviando...';
   confirmBtn.disabled = true;
 
+  let photoUrl = null;
+  if(photoFile){
+    try { photoUrl = await uploadProviderPhoto(photoFile); }
+    catch(err){
+      confirmBtn.textContent = originalLabel;
+      confirmBtn.disabled = false;
+      showToast('Não foi possível enviar a foto. Tente novamente.');
+      console.error(err);
+      return;
+    }
+  }
+
   const { error } = await sb.from('providers').insert({
-    name, city, cat, description: desc, whats: whatsDigits, phone: phoneDigits, email, consent, status: "pendente"
+    name, city, cat, description: desc, whats: whatsDigits, phone: phoneDigits, email, consent, status: "pendente", photo_url: photoUrl
   });
   confirmBtn.textContent = originalLabel;
   confirmBtn.disabled = false;
@@ -1848,6 +1914,8 @@ document.getElementById('reviewConfirmBtn').onclick = async () => {
     showToast('✅ Cadastro enviado! Fica pendente até aprovação.');
   }
   pendingSubmitData = null;
+  pendingPhotoFile = null;
+  existingPhotoUrl = null;
   renderGrid();
 };
 
@@ -3084,7 +3152,7 @@ function buildAdminProviderRow(p, idx){
   row.className = 'admin-row';
   const statusLabel = {pendente:'Pendente de aprovação', ativo:'Publicado', excluido:'Excluído (oculto do app)'}[p.status];
   row.innerHTML = `
-    <div class="avatar">${avatarIcon(p.cat)}</div>
+    <div class="avatar">${avatarContent(p)}</div>
     <div class="admin-info">
       <div class="admin-name">${p.name}</div>
       <div class="admin-meta">${p.city} · ${p.cat} · ${statusLabel}</div>

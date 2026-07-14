@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -319,6 +320,14 @@
   .consent-row label{
     margin:0; font-size:12.5px; color:var(--ink-soft); font-weight:400; line-height:1.4; cursor:pointer;
   }
+  .password-wrap{position:relative;}
+  .password-wrap input{padding-right:44px;}
+  .password-toggle{
+    position:absolute; right:6px; top:50%; transform:translateY(-50%);
+    background:none; border:none; cursor:pointer; font-size:16px; padding:6px; line-height:1;
+    opacity:0.6;
+  }
+  .password-toggle:hover{opacity:1;}
   .file-btn{
     border:1.5px dashed var(--border); border-radius:var(--radius-sm); padding:14px;
     text-align:center; font-size:13.5px; color:var(--ink-soft); cursor:pointer; background:var(--bg);
@@ -529,7 +538,7 @@
 
   <div class="section-label" id="listLabel">Prestadores cadastrados</div>
   <div class="grid" id="grid"></div>
-  <div class="note">🧪 Modo de teste: os dados abaixo são fictícios, só pra você navegar pela experiência. Quando aprovar o layout, a gente conecta o banco de dados real (Supabase) e publica no domínio de verdade.</div>
+  
 
   <div class="footer">
     <span>© 2026 CONECTAi. Todos os direitos reservados.</span>
@@ -554,7 +563,10 @@
     <label for="adminEmail">E-mail</label>
     <input type="email" id="adminEmail" placeholder="seu@email.com">
     <label for="adminPassword">Senha</label>
-    <input type="password" id="adminPassword" placeholder="Digite a senha">
+    <div class="password-wrap">
+      <input type="password" id="adminPassword" placeholder="Digite a senha">
+      <button type="button" class="password-toggle" id="togglePasswordBtn" title="Mostrar/ocultar senha">👁️</button>
+    </div>
     <button class="btn-primary" style="margin-top:20px; background:linear-gradient(140deg, var(--green) 0%, var(--green-mid) 100%);" id="adminLoginSubmit">Entrar</button>
     <button class="footer-link" id="forgotPasswordBtn" style="margin-top:12px; display:block; width:100%; text-align:center;">Esqueci minha senha</button>
   </div>
@@ -772,6 +784,12 @@
     </div>
 
     <div class="admin-tab-panel" id="tabCidades" style="display:none;">
+      <div class="pix-settings" style="margin-bottom:16px;">
+        <div class="pix-settings-title">Acessos por cidade</div>
+        <p style="margin:8px 0 14px; font-size:12.5px; color:var(--ink-soft); line-height:1.5;">Quantas vezes cada cidade foi aberta pelo público.</p>
+        <div id="cityViewsList" style="display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
+
       <div class="pix-settings">
         <div class="pix-settings-title">Cidades atendidas</div>
         <p style="margin:8px 0 14px; font-size:12.5px; color:var(--ink-soft); line-height:1.5;">Adicione novas cidades para expandir o app. Uma cidade só pode ser removida se não tiver nenhum prestador cadastrado nela.</p>
@@ -1086,6 +1104,10 @@ const SUPABASE_URL = "https://bntculvmeqronqsobbyn.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_togmmXfIfHqHio5LgEIOag_yOx1U9ST";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+function notifyAdmin(subject, html){
+  sb.functions.invoke('notify-admin', { body: { subject, html } }).catch(err => console.error('notifyAdmin falhou:', err));
+}
+
 const BR_STATES = [
   ["AC","Acre"],["AL","Alagoas"],["AP","Amapá"],["AM","Amazonas"],["BA","Bahia"],
   ["CE","Ceará"],["DF","Distrito Federal"],["ES","Espírito Santo"],["GO","Goiás"],
@@ -1274,6 +1296,7 @@ pubCitySelect.addEventListener('change', async () => {
   if(currentCity){
     document.getElementById('listLabel').textContent = "Carregando...";
     await fetchProvidersForCity(currentCity);
+    sb.from('page_views').insert({ city: currentCity }).then(() => {}); // registra o acesso, sem travar a tela
   }
   renderGrid();
 });
@@ -1324,7 +1347,7 @@ function renderGrid(){
 
   if(!currentCity){
     label.textContent = "Escolha o estado e a cidade";
-    grid.innerHTML = '<div class="empty">📍 Escolha o estado e a cidade acima para ver os prestadores e comércios disponíveis.</div>';
+    grid.innerHTML = '<div class="empty">📍 Escolha o estado e a cidade acima para ver os prestadores, comércio e serviços públicos disponíveis.</div>';
     return;
   }
 
@@ -1414,6 +1437,15 @@ document.getElementById('reportSubmit').onclick = async () => {
     status: "pendente"
   });
   if(error){ showToast('Não foi possível enviar a denúncia. Tente novamente.'); console.error(error); return; }
+  notifyAdmin(
+    `🚩 Nova denúncia: ${currentDetailProvider.name}`,
+    `<p>Um perfil foi denunciado no CONECTAi.</p>
+     <p><strong>Prestador:</strong> ${currentDetailProvider.name}<br>
+     <strong>Cidade:</strong> ${currentDetailProvider.city}<br>
+     <strong>Motivo:</strong> ${reportReason}</p>
+     ${detail ? `<p><strong>Detalhes:</strong> ${detail}</p>` : ''}
+     <p>Acesse o painel de moderação (aba Denúncias) para revisar.</p>`
+  );
   document.getElementById('reportOverlay').classList.remove('open');
   document.getElementById('detailOverlay').classList.remove('open');
   showToast('🚩 Denúncia enviada. Obrigado por ajudar a manter o CONECTAi confiável.');
@@ -1521,7 +1553,7 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     if(tab.dataset.tab === 'cadastros') renderAdminList();
     if(tab.dataset.tab === 'denuncias') renderReportsList();
     if(tab.dataset.tab === 'visuais') VISUAL_TYPES.forEach(t => refreshIconSection(t));
-    if(tab.dataset.tab === 'cidades'){ renderCityManageList(); renderCityRequestList(); }
+    if(tab.dataset.tab === 'cidades'){ renderCityManageList(); renderCityRequestList(); renderCityViewsList(); }
     if(tab.dataset.tab === 'categorias') renderCategoryManageList();
   };
 });
@@ -1904,6 +1936,15 @@ document.getElementById('reviewConfirmBtn').onclick = async () => {
   }
   document.getElementById('reviewOverlay').classList.remove('open');
   document.getElementById('formOverlay').classList.remove('open');
+  notifyAdmin(
+    `🆕 Novo cadastro pendente: ${name}`,
+    `<p>Um novo cadastro chegou e está aguardando aprovação no CONECTAi.</p>
+     <p><strong>Nome:</strong> ${name}<br>
+     <strong>Cidade:</strong> ${city}<br>
+     <strong>Categoria:</strong> ${cat}<br>
+     <strong>E-mail:</strong> ${email}</p>
+     <p>Acesse o painel de moderação para revisar.</p>`
+  );
   if(formCityRequestRef){
     const newCount = (formCityRequestRef.linkedRegistrations || 0) + 1;
     await sb.from('city_requests').update({ linked_registrations: newCount }).eq('id', formCityRequestRef.id);
@@ -1964,6 +2005,12 @@ document.getElementById('reqCitySubmitBtn').onclick = async () => {
   }).select().single();
   btn.disabled = false;
   if(error){ showToast('Não foi possível enviar a solicitação. Tente novamente.'); console.error(error); return; }
+  notifyAdmin(
+    `🏙️ Nova solicitação de cidade: ${city} — ${state}`,
+    `<p>Alguém pediu a inclusão de uma nova cidade no CONECTAi.</p>
+     <p><strong>Cidade:</strong> ${city}<br><strong>Estado:</strong> ${state}</p>
+     <p>Acesse o painel de moderação (aba Cidades) para revisar.</p>`
+  );
   const req = { id: data.id, state, city, date: new Date(data.created_at).toLocaleDateString('pt-BR'), status:"pendente", linkedRegistrations:0 };
   cityRequests.unshift(req);
   pendingCityRequestRef = req;
@@ -2101,6 +2148,33 @@ function renameCityEverywhere(oldName, newName){
   cityRequests.forEach(r => { if(r.city === oldName) r.city = newName; });
   if(currentCity === oldName){ currentCity = newName; }
   if(typeof adminCityFilter !== 'undefined' && adminCityFilter === oldName) adminCityFilter = newName;
+}
+
+async function renderCityViewsList(){
+  const list = document.getElementById('cityViewsList');
+  list.innerHTML = '<div class="admin-empty">Carregando...</div>';
+  const { data, error } = await sb.from('page_views').select('city');
+  if(error){
+    list.innerHTML = '<div class="admin-empty">Não foi possível carregar os acessos.</div>';
+    console.error(error);
+    return;
+  }
+  const counts = {};
+  data.forEach(row => { counts[row.city] = (counts[row.city] || 0) + 1; });
+  const cityNames = CITIES.map(c => c.name);
+  data.forEach(row => { if(!cityNames.includes(row.city) && counts[row.city] === undefined) counts[row.city] = 0; });
+  const entries = cityNames.map(name => [name, counts[name] || 0]).sort((a,b) => b[1] - a[1]);
+  if(entries.length === 0){
+    list.innerHTML = '<div class="admin-empty">Nenhuma cidade cadastrada ainda.</div>';
+    return;
+  }
+  list.innerHTML = "";
+  entries.forEach(([name, count]) => {
+    const row = document.createElement('div');
+    row.className = 'city-manage-row';
+    row.innerHTML = `<span>${name}</span><span style="font-weight:800; color:var(--green-deep);">${count}</span>`;
+    list.appendChild(row);
+  });
 }
 
 function renderCityManageList(){
@@ -2898,6 +2972,18 @@ document.getElementById('adminBtn').onclick = () => {
   document.getElementById('adminLoginOverlay').classList.add('open');
 };
 document.getElementById('closeAdminLogin').onclick = () => document.getElementById('adminLoginOverlay').classList.remove('open');
+
+document.getElementById('togglePasswordBtn').onclick = () => {
+  const input = document.getElementById('adminPassword');
+  const btn = document.getElementById('togglePasswordBtn');
+  if(input.type === 'password'){
+    input.type = 'text';
+    btn.textContent = '🙈';
+  } else {
+    input.type = 'password';
+    btn.textContent = '👁️';
+  }
+};
 
 // RECUPERAR SENHA
 document.getElementById('forgotPasswordBtn').onclick = () => {
